@@ -7,7 +7,12 @@ import pandas as pd
 from sqlalchemy import create_engine, Column, Integer, String, Float, ForeignKey, Date
 from sqlalchemy.orm import sessionmaker, declarative_base, relationship
 from fpdf import FPDF
-from datetime import date
+from datetime import datetime, timedelta, timezone
+
+# --- RELOJ CONFIGURADO PARA COSTA RICA (UTC -6) ---
+def obtener_fecha_cr():
+    zona_cr = timezone(timedelta(hours=-6))
+    return datetime.now(zona_cr).date()
 
 # --- 1. CONFIGURACIÓN DE BASE DE DATOS ---
 cadena_conexion = "postgresql://neondb_owner:npg_Qa5DLvoJw4AP@ep-sweet-bonus-ammr3vxr.c-5.us-east-1.aws.neon.tech/neondb?sslmode=require"
@@ -37,10 +42,9 @@ class Proforma(Base):
     __table_args__ = {'extend_existing': True}
     id = Column(Integer, primary_key=True)
     cliente_id = Column(Integer, ForeignKey('clientes.id'))
-    fecha = Column(Date, default=date.today)
+    fecha = Column(Date, default=obtener_fecha_cr) # Se usa la hora de CR al guardar
     total = Column(Float, default=0.0)
     
-    # --- NUEVAS COLUMNAS PARA LAS NOTAS PERSONALIZABLES ---
     validez_dias = Column(Integer, default=8)
     forma_pago = Column(String(150), default="CREDITO 30 DIAS")
     garantia = Column(String(150), default="1 Meses por defectos de fabricación")
@@ -71,7 +75,6 @@ if 'carrito' not in st.session_state:
 if 'editando_proforma_id' not in st.session_state:
     st.session_state.editando_proforma_id = None
 
-# Valores por defecto de las notas para que no tengas que escribirlas de cero siempre
 if 'notas_default' not in st.session_state:
     st.session_state.notas_default = {
         "validez": 8,
@@ -108,14 +111,14 @@ def generar_pdf(cliente_obj, carrito, total_proforma, id_proforma, validez, pago
     pdf.cell(0, 5, "E-MAIL: tallerquesada3@gmail.com", align="C", ln=1)
     
     # --- FECHA ---
-    meses = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"]
-    hoy = date.today()
+    meses_es = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"]
+    hoy = obtener_fecha_cr() # Reloj de Costa Rica
     
     pdf.set_xy(10, 42)
     pdf.set_font("Helvetica", style="B", size=10)
     pdf.cell(15, 5, "FECHA:")
     pdf.set_font("Helvetica", size=10)
-    pdf.cell(80, 5, f"{hoy.day} de {meses[hoy.month - 1]} del {hoy.year}")
+    pdf.cell(80, 5, f"{hoy.day} de {meses_es[hoy.month - 1]} del {hoy.year}")
     
     # --- CAJA DEL CLIENTE ---
     y_caja = 50
@@ -240,7 +243,6 @@ def generar_pdf(cliente_obj, carrito, total_proforma, id_proforma, validez, pago
     pdf.set_x(30)
     pdf.cell(60, 4, "E-MAIL:tallerquesada@costarricense.cr", align="C", ln=1)
     
-    # AQUI SE IMPRIMEN LAS NOTAS DINAMICAS
     pdf.set_xy(10, pdf.get_y() + 5)
     pdf.set_font("Helvetica", style="B", size=10)
     pdf.cell(0, 5, "NOTAS", ln=1)
@@ -262,9 +264,6 @@ def generar_pdf(cliente_obj, carrito, total_proforma, id_proforma, validez, pago
 st.title("💼 Sistema Profesional de Proformas")
 tab_proforma, tab_inventario, tab_clientes, tab_historial = st.tabs(["📝 Crear/Editar Proforma", "📦 Inventario", "👥 Clientes", "🗄️ Historial"])
 
-# ==========================================
-# PESTAÑA: INVENTARIO 
-# ==========================================
 with tab_inventario:
     st.subheader("Buscador y Editor de Productos")
     busqueda = st.text_input("🔍 Buscar por Código o Descripción:")
@@ -306,16 +305,12 @@ with tab_inventario:
             st.success("¡Artículo creado!")
             st.rerun()
 
-# ==========================================
-# PESTAÑA: CREAR / EDITAR PROFORMA 
-# ==========================================
 with tab_proforma:
     if st.session_state.editando_proforma_id:
         st.warning(f"✏️ **MODO EDICIÓN ACTIVADO:** Estás modificando la Proforma N° {st.session_state.editando_proforma_id}")
         if st.button("❌ Cancelar Edición"):
             st.session_state.editando_proforma_id = None
             st.session_state.carrito = []
-            # Restaurar notas por defecto
             st.session_state.notas_default = {"validez": 8, "pago": "CREDITO 30 DIAS", "garantia": "1 Meses por defectos de fabricación", "entrega": "22 Dia(s) después de aprobada la cotización"}
             st.rerun()
 
@@ -349,9 +344,8 @@ with tab_proforma:
                 
             st.divider()
             st.subheader("2. Condiciones (Notas)")
-            # Nuevos campos para modificar las notas
             input_validez = st.number_input("Validez (Días)", min_value=1, value=st.session_state.notas_default["validez"])
-            input_pago = st.text_input("Forma de pago (Ej. CONTADO, CREDITO 15 DIAS...)", value=st.session_state.notas_default["pago"])
+            input_pago = st.text_input("Forma de pago", value=st.session_state.notas_default["pago"])
             input_garantia = st.text_input("Garantía", value=st.session_state.notas_default["garantia"])
             input_entrega = st.text_input("Tiempo de entrega", value=st.session_state.notas_default["entrega"])
                 
@@ -376,7 +370,6 @@ with tab_proforma:
                         prof_actual = session.query(Proforma).get(st.session_state.editando_proforma_id)
                         prof_actual.cliente_id = c_obj.id
                         prof_actual.total = total_proforma
-                        # Actualizar notas
                         prof_actual.validez_dias = input_validez
                         prof_actual.forma_pago = input_pago
                         prof_actual.garantia = input_garantia
@@ -419,9 +412,6 @@ with tab_proforma:
     else:
         st.warning("⚠️ Registra al menos un cliente y un producto primero.")
 
-# ==========================================
-# PESTAÑA: CLIENTES 
-# ==========================================
 with tab_clientes:
     with st.form("form_cliente", clear_on_submit=True):
         st.write("Agregar Cliente")
@@ -435,9 +425,6 @@ with tab_clientes:
             st.success("Cliente guardado exitosamente.")
             st.rerun()
 
-# ==========================================
-# PESTAÑA: HISTORIAL (CON EDICIÓN)
-# ==========================================
 with tab_historial:
     st.subheader("Proformas Guardadas")
     historial = session.query(Proforma).order_by(Proforma.id.desc()).all()
@@ -461,7 +448,6 @@ with tab_historial:
                             "precio": d.precio_fijado,
                             "subtotal": d.cantidad * d.precio_fijado
                         })
-                    # Cargar las notas de esta proforma para editarlas
                     st.session_state.notas_default = {
                         "validez": prof.validez_dias,
                         "pago": prof.forma_pago,
